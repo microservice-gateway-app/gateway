@@ -1,0 +1,42 @@
+[project]
+name = "gateway"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [{ name = "Hai Binh Do", email = "binhdoitsme@gmail.com" }]
+dependencies = [
+    "injector>=0.22.0",
+    "fastapi>=0.115.6",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.10.3",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.7.0",
+    "tenacity>=9.0.0",
+    "cryptography>=44.0.0",
+    "python-jose>=3.3.0",
+    "pyyaml>=6.0.2",
+    "redis[hiredis]>=5.2.1",
+]
+requires-python = "==3.12.*"
+readme = "README.md"
+license = { text = "MIT" }
+
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.scripts]
+_.env_file = ".env"
+start = { cmd = "python src/main.py", env = { PYTHONPATH = "./src" } }
+dev = { cmd = "uvicorn src.main:app --host=0.0.0.0 --port=8000 --reload", env = { PYTHONPATH = "./src" } }
+test = { cmd = "pytest --cov-config=tox.ini --cov=src --cov-report term-missing tests", env = { PYTHONPATH = "./src" } }
+lint = { cmd = "ruff check --config ruff.toml" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+    "pdm>=2.22.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "types-python-jose>=3.3.4.20240106",
+    "ruff>=0.8.4",
+]

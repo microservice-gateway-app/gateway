@@ -1,0 +1,17 @@
+{
+  "users": {
+    "v1": {
+      "url": "http://localhost:8002/users",
+      "health_check": "http://localhost:8002/health",
+      "openapi": "http://localhost:8002/openapi.json"
+    }
+  },
+  "projects": {
+    "v1": {
+      "url": "http://localhost:8001",
+      "health_check": "http://localhost:8001/health",
+      "openapi": "http://localhost:8001/openapi.json",
+      "auth_endpoint": "/tokens"
+    }
+  }
+}
