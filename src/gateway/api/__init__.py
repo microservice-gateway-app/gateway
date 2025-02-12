@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from injector import Module, provider, singleton
+from injector import Injector, Module, provider, singleton
 
 from gateway.api.controllers.gateway_controller import GatewayController
 from gateway.core.services.registry import ServiceRegistry
@@ -33,6 +33,8 @@ class APIModule(Module):
     def provide_app(
         self,
         service_registry: ServiceRegistry,
+        injector: Injector,
     ) -> GatewayApp:
         app = GatewayApp(service_registry=service_registry)
+        app.app.state.injector = injector
         return app

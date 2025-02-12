@@ -1,27 +1,50 @@
 from __future__ import annotations
 
 from base64 import b64encode
-import logging
-from typing import Any, Iterable
+from typing import Any, Iterable, Self
+from urllib.parse import urlparse
 
+import httpx
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from pydantic import BaseModel, ConfigDict, Field
-import httpx
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .auth import AuthContext
+from .client import HttpClientMixin
 
 
-class Service(BaseModel):
+def match_route(route: str, path: str) -> bool:
+    route_parts = route.strip("/").split("/")
+    path_parts = path.strip("/").split("/")
+    if len(route_parts) != len(path_parts):
+        return False
+    for route_part, path_part in zip(route_parts, path_parts):
+        if route_part.startswith("{") and route_part.endswith("}"):
+            continue
+        if route_part != path_part:
+            return False
+    return True
+
+
+class Service(BaseModel, HttpClientMixin):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
-    url: str
-    health_check: str = "/health"
-    openapi: str = "/openapi.json"
-    auth_endpoint: str = "/auth"
+    base_url: str
+    health_check_path: str = "/health"
+    openapi_path: str = "/openapi.json"
     public_key: rsa.RSAPublicKey
     openapi_routes: set[str] = Field(default_factory=set)
+    auth_context: AuthContext | None = Field(alias="auth")
 
-    def encrypt_actor_id(self, actor_id: str) -> str:
+    @model_validator(mode="after")
+    def after_init(self) -> Self:
+        if self.auth_context:
+            self.auth_context.public_key = self.public_key
+            self.auth_context.base_url = self.base_url
+        return self
+
+    def _encrypt_actor_id(self, actor_id: str) -> str:
         encrypted = self.public_key.encrypt(
             actor_id.encode(),
             padding.OAEP(
@@ -39,74 +62,23 @@ class Service(BaseModel):
         self.openapi_routes.clear()
 
     def has_route(self, path: str) -> bool:
-        result = f"/{self.name}/{path}" in self.openapi_routes
-        if not result:
-            logging.getLogger(__name__).debug(
-                f"Route /{self.name}/{path} not found on service [{self.name}], looked up among {self.openapi_routes}"
-            )
-        return result
+        parsed_path = urlparse(path).path
+        return any(match_route(route, parsed_path) for route in self.openapi_routes)
 
-    async def auth(self, actor_id: str) -> str | None:
-        if not actor_id:
-            return None
-        response = await self.post(
-            self.auth_endpoint, headers={"X-Actor-ID": self.encrypt_actor_id(actor_id)}
-        )
-        response_body = dict[str, str](await response.json())
-        return response_body.get("access_token")
+    def match_path(self, path: str) -> str | None:
+        possible_paths = [f"/{path}", f"/{self.name}/{path}"]
+        for path in possible_paths:
+            if self.has_route(path=path):
+                return path.lstrip("/")
+        return None
 
-    async def request(
-        self,
-        method: str,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
-        json: Any | None = None,
-    ) -> httpx.Response:
-        url = f"{self.url.rstrip('/')}/{endpoint.strip('/')}"
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method, url, headers=headers, params=params, json=json
-            )
-        response.raise_for_status()
-        return response
+    async def auth(self, **kwargs: Any) -> dict[str, str]:
+        if not self.auth_context:
+            return {}
+        return await self.auth_context.auth(**kwargs) or {}
 
-    async def get(
-        self,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
-    ) -> httpx.Response:
-        return await self.request("GET", endpoint, headers=headers, params=params)
+    async def do_health_check(self, timeout: int = 1) -> httpx.Response:
+        return await self.get(self.health_check_path, timeout=timeout)
 
-    async def post(
-        self,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        json: Any | None = None,
-    ) -> httpx.Response:
-        return await self.request("POST", endpoint, headers=headers, json=json)
-
-    async def put(
-        self,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        json: Any | None = None,
-    ) -> httpx.Response:
-        return await self.request("PUT", endpoint, headers=headers, json=json)
-
-    async def patch(
-        self,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        json: Any | None = None,
-    ) -> httpx.Response:
-        return await self.request("PATCH", endpoint, headers=headers, json=json)
-
-    async def delete(
-        self,
-        endpoint: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
-    ) -> httpx.Response:
-        return await self.request("DELETE", endpoint, headers=headers, params=params)
+    async def fetch_openapi_definitions(self, timeout: int = 5) -> httpx.Response:
+        return await self.get(self.openapi_path, timeout=timeout)

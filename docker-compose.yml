@@ -1,0 +1,27 @@
+version: "3.9"
+name: gateway-service
+services:
+  gateway_service:
+    container_name: gateway-service
+    build:
+      context: .
+    env_file: .env
+    environment:
+      - SERVICE_CONFIG_FILE=services.compose.json
+    ports:
+      - "8000:8000"
+    networks:
+      - internal
+    tty: true
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "63790:6379"
+    networks:
+      - internal
+
+networks:
+  internal:
+    name: project-internal
+    external: true

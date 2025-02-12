@@ -1,7 +1,7 @@
 {
   "users": {
     "v1": {
-      "base_url": "http://localhost:8002",
+      "base_url": "http://user-service:8000",
       "health_check_path": "/health",
       "openapi_path": "/openapi.json",
       "auth": {
@@ -15,7 +15,7 @@
   },
   "projects": {
     "v1": {
-      "base_url": "http://localhost:8001",
+      "base_url": "http://project-service:8000",
       "health_check_path": "/health",
       "openapi_path": "/openapi.json",
       "auth": {

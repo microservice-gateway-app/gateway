@@ -4,8 +4,9 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Security
 
+from gateway.api.middlewares.authorization import get_user_data
 from gateway.core.services.registry import ServiceRegistry
 
 
@@ -17,8 +18,8 @@ class GatewayController:
         self.setup_routes()
 
     def setup_routes(self):
-        user_service_path = "/api/{version}/users/{full_path:str}"
-        other_services_path = "/api/{version}/{service_name:str}/{full_path:str}"
+        user_service_path = "/api/{version}/users/{full_path:path}"
+        other_services_path = "/api/{version}/{service_name:str}/{full_path:path}"
 
         self.router.get("/health")(self.health_check)
 
@@ -62,13 +63,19 @@ class GatewayController:
         Raises:
             httpx.HTTPStatusError: If the request to the user service fails.
         """
-        user_service = self.registry.get(service="user", version=version)
+        service = self.registry.get(service="users", version=version)
+        matched_path = service.match_path(full_path)
+        if matched_path is None:
+            raise HTTPException(
+                status_code=404, detail="Endpoint not found in service API"
+            )
+
         headers = dict(request.headers)
         headers.pop("content-length")
         try:
-            response = await user_service.request(
+            response = await service.request(
                 method=request.method,
-                endpoint=full_path,
+                endpoint=matched_path,
                 headers=headers,
                 json=body or None,
             )
@@ -87,6 +94,7 @@ class GatewayController:
         full_path: str,
         version: str = "v1",
         body: dict[str, Any] | None = Body(default=None),
+        user_data: dict[str, Any] = Security(get_user_data),
     ):
         """
         Proxies a request to a specified service.
@@ -108,7 +116,8 @@ class GatewayController:
             raise HTTPException(status_code=404, detail="Service not found")
         service = self.registry.get(service=service_name, version=version)
 
-        if not service.has_route(path=full_path):
+        matched_path = service.match_path(full_path)
+        if matched_path is None:
             raise HTTPException(
                 status_code=404, detail="Endpoint not found in service API"
             )
@@ -117,12 +126,13 @@ class GatewayController:
         if "content-length" in headers:
             headers.pop("content-length")
         # TODO: store and fetch access_token-user mapping to redis
-        user_service = self.registry.get(service="users")
         try:
-            user_response = await user_service.get("/me", headers=headers)
-            user_data = user_response.json()
-            actor_id = user_data.get("user_id", "")
-            access_token = await service.auth(actor_id=actor_id)
+            actor_id = str(user_data.get("user_id", ""))
+            auth_result = await service.auth(
+                actor_id=actor_id,
+                scopes=list[str](user_data.get("permissions", [])),
+            )
+            access_token = auth_result.get("access_token")
         except httpx.RequestError as exc:
             raise HTTPException(status_code=503, detail=f"Service unavailable: {exc}")
         except httpx.HTTPStatusError as exc:
@@ -131,14 +141,17 @@ class GatewayController:
             )
 
         if access_token:
-            headers["Authorization"] = access_token
+            headers = {"Authorization": f"Bearer {access_token}"}
+        else:
+            headers = {}
 
         try:
             response = await service.request(
                 method=request.method,
-                endpoint=full_path,
+                endpoint=matched_path,
                 headers=headers,
-                json=body or None,
+                json=body,
+                timeout=30,
             )
             return response.json()
         except httpx.RequestError as exc:

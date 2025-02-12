@@ -3,54 +3,55 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from .service import Service
+
+ServiceName = str
+Version = str
+ServiceRoutes = set[str]
+ServiceStatus = bool
 
 
 class ServiceRegistry:
     def __init__(
         self,
-        services: dict[str, dict[str, Service]],
+        services: dict[ServiceName, dict[Version, Service]],
         public_keys: dict[str, rsa.RSAPublicKey],
     ):
         self.services = services
         self.keys = public_keys
-        self.service_health = dict[str, bool]()
-        self.service_routes = dict[str, set[str]]()
+        self.service_health = dict[ServiceName, ServiceStatus]()
+        self.service_routes = dict[ServiceName, ServiceRoutes]()
+        self.logger = logging.getLogger(__name__)
 
-    async def health_check_job(self, interval_seconds: int = 10):
+    async def health_check_job(self, interval_seconds: int = 30) -> None:
         while True:
-            logging.info("[heartbeat] checking service status")
+            self.logger.info("checking service status")
             for _, versions in self.services.items():
                 for version, service_version in versions.items():
                     await self.do_service_health_check(
                         service=service_version, version=version
                     )
-            logging.info("[heartbeat] [DONE] checked service status")
+            self.logger.info("[DONE] checked service status")
 
             await asyncio.sleep(interval_seconds)
 
     async def do_service_health_check(self, service: Service, version: str):
-        health_url = service.health_check
-        openapi_url = service.openapi
-
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(health_url, timeout=5)
-                self.service_health[f"{service.name}:{version}"] = (
-                    response.status_code == 200
-                )
+            response = await service.do_health_check(timeout=1)
+            self.service_health[f"{service.name}:{version}"] = (
+                response.status_code == 200
+            )
         except Exception:
             self.service_health[f"{service.name}:{version}"] = False
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(openapi_url, timeout=5)
-                if response.status_code == 200:
-                    openapi_data = response.json()
-                    service.add_routes(openapi_data.get("paths", {}).keys())
+            response = await service.fetch_openapi_definitions(timeout=5)
+            if response.status_code == 200:
+                openapi_data = response.json()
+                service.clear_routes()
+                service.add_routes(openapi_data.get("paths", {}).keys())
         except Exception:
             service.clear_routes()
 

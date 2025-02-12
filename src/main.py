@@ -10,7 +10,7 @@ from gateway.module import provide_injector
 logging.basicConfig(
     format="%(levelname)s [%(asctime)s] %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.DEBUG,
+    level=logging.INFO,
 )
 injector = provide_injector()
 gateway = injector.get(GatewayApp)
